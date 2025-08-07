@@ -1,6 +1,6 @@
 {
-  "id": "cf19bbc9-c8f5-4ea4-84e9-9711bc7704fb",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "d9948acd-1029-450d-ba60-74dfd681425a",
+  "prevId": "cf19bbc9-c8f5-4ea4-84e9-9711bc7704fb",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -10,7 +10,7 @@
       "columns": {
         "userId": {
           "name": "userId",
-          "type": "integer",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -117,7 +117,7 @@
         },
         "user_id": {
           "name": "user_id",
-          "type": "integer",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
@@ -175,7 +175,7 @@
         },
         "userId": {
           "name": "userId",
-          "type": "integer",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -214,9 +214,10 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "serial",
+          "type": "uuid",
           "primaryKey": true,
-          "notNull": true
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
         "name": {
           "name": "name",

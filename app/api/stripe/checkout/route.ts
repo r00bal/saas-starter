@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db/drizzle';
 import { users } from '@/lib/db/schema';
-import { setSession } from '@/lib/auth/session';
+// setSession no longer needed with Auth.js
 import { NextRequest, NextResponse } from 'next/server';
 import { stripe } from '@/lib/payments/stripe';
 import Stripe from 'stripe';
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     const user = await db
       .select()
       .from(users)
-      .where(eq(users.id, Number(userId)))
+      .where(eq(users.id, userId))
       .limit(1);
 
     if (user.length === 0) {
@@ -74,9 +74,9 @@ export async function GET(request: NextRequest) {
         subscriptionStatus: subscription.status,
         updatedAt: new Date(),
       })
-      .where(eq(users.id, Number(userId)));
+      .where(eq(users.id, userId));
 
-    await setSession(user[0]);
+    // Auth.js handles session automatically via middleware
     return NextResponse.redirect(new URL('/dashboard', request.url));
   } catch (error) {
     console.error('Error handling successful checkout:', error);

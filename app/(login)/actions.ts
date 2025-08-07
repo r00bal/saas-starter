@@ -11,18 +11,18 @@ import {
   type NewActivityLog,
   ActivityType,
 } from "@/lib/db/schema";
-import { comparePasswords, hashPassword, setSession } from "@/lib/auth/session";
+import { comparePasswords, hashPassword } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
 import { createCheckoutSession, stripe } from "@/lib/payments/stripe";
 import { getUser } from "@/lib/db/queries";
 import {
   validatedAction,
   validatedActionWithUser,
 } from "@/lib/auth/middleware";
+import { signIn as authSignIn, signOut as authSignOut } from "@/auth";
 
 async function logActivity(
-  userId: number,
+  userId: string,
   type: ActivityType,
   ipAddress?: string
 ) {
@@ -42,47 +42,40 @@ const signInSchema = z.object({
 export const signIn = validatedAction(signInSchema, async (data, formData) => {
   const { email, password } = data;
 
-  const user = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
+  try {
+    // Use Auth.js signIn with credentials provider
+    const result = await authSignIn("credentials", {
+      email,
+      password,
+      redirect: false,
+    });
 
-  if (user.length === 0) {
+    if (!result) {
+      return {
+        error: "Invalid email or password. Please try again.",
+        email,
+        password,
+      };
+    }
+
+    const redirectTo = formData.get("redirect") as string | null;
+    if (redirectTo === "checkout") {
+      const priceId = formData.get("priceId") as string;
+      const user = await getUser();
+      if (user) {
+        return createCheckoutSession({ user, priceId });
+      }
+    }
+
+    redirect("/dashboard");
+  } catch (error) {
+    console.error("Sign in error:", error);
     return {
       error: "Invalid email or password. Please try again.",
       email,
       password,
     };
   }
-
-  const foundUser = user[0];
-
-  const isPasswordValid = await comparePasswords(
-    password,
-    foundUser.passwordHash
-  );
-
-  if (!isPasswordValid) {
-    return {
-      error: "Invalid email or password. Please try again.",
-      email,
-      password,
-    };
-  }
-
-  await Promise.all([
-    setSession(foundUser),
-    logActivity(foundUser.id, ActivityType.SIGN_IN),
-  ]);
-
-  const redirectTo = formData.get("redirect") as string | null;
-  if (redirectTo === "checkout") {
-    const priceId = formData.get("priceId") as string;
-    return createCheckoutSession({ user: foundUser, priceId });
-  }
-
-  redirect("/dashboard");
 });
 
 const signUpSchema = z.object({
@@ -118,24 +111,54 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
     })
     .returning();
 
-  await Promise.all([
-    logActivity(createdUser.id, ActivityType.SIGN_UP),
-    setSession(createdUser),
-  ]);
+  await logActivity(createdUser.id, ActivityType.SIGN_UP);
 
-  const redirectTo = formData.get("redirect") as string | null;
-  if (redirectTo === "checkout") {
-    const priceId = formData.get("priceId") as string;
-    return createCheckoutSession({ user: createdUser, priceId });
+  try {
+    // Use Auth.js signIn after successful registration
+    const result = await authSignIn("credentials", {
+      email,
+      password,
+      redirect: false,
+    });
+
+    if (!result) {
+      return {
+        error: "Account created but sign in failed. Please try signing in.",
+        email,
+        password,
+      };
+    }
+
+    const redirectTo = formData.get("redirect") as string | null;
+    if (redirectTo === "checkout") {
+      const priceId = formData.get("priceId") as string;
+      return createCheckoutSession({ user: createdUser, priceId });
+    }
+
+    redirect("/dashboard");
+  } catch (error) {
+    console.error("Auto sign-in error:", error);
+    return {
+      error: "Account created successfully. Please sign in.",
+      email: "",
+      password: "",
+    };
   }
-
-  redirect("/dashboard");
 });
 
 export async function signOut() {
-  const user = (await getUser()) as User;
-  await logActivity(user.id, ActivityType.SIGN_OUT);
-  (await cookies()).delete("session");
+  const user = await getUser();
+  if (user) {
+    await logActivity(user.id, ActivityType.SIGN_OUT);
+  }
+  await authSignOut({ redirect: false });
+  redirect("/");
+}
+
+export async function signInWithGoogle(callbackUrl?: string) {
+  await authSignIn("google", {
+    redirectTo: callbackUrl || "/dashboard",
+  });
 }
 
 const updatePasswordSchema = z.object({
@@ -148,6 +171,16 @@ export const updatePassword = validatedActionWithUser(
   updatePasswordSchema,
   async (data, _, user) => {
     const { currentPassword, newPassword, confirmPassword } = data;
+
+    // Check if user has a password (OAuth users might not)
+    if (!user.passwordHash) {
+      return {
+        currentPassword,
+        newPassword,
+        confirmPassword,
+        error: "Cannot update password for OAuth accounts.",
+      };
+    }
 
     const isPasswordValid = await comparePasswords(
       currentPassword,
@@ -227,6 +260,14 @@ export const deleteAccount = validatedActionWithUser(
   async (data, _, user) => {
     const { password } = data;
 
+    // Check if user has a password (OAuth users might not)
+    if (!user.passwordHash) {
+      return {
+        password,
+        error: "Cannot delete OAuth accounts with password verification.",
+      };
+    }
+
     const isPasswordValid = await comparePasswords(password, user.passwordHash);
     if (!isPasswordValid) {
       return {
@@ -253,8 +294,8 @@ export const deleteAccount = validatedActionWithUser(
         })
         .where(eq(users.id, user.id));
 
-      // Clear session
-      (await cookies()).delete("session");
+      // Sign out using Auth.js
+      await authSignOut({ redirect: false });
 
       redirect("/sign-in");
     } catch (error) {
